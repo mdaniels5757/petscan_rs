@@ -8,7 +8,7 @@ cargo update
 # Build new server binary
 rm ../cargo.out ../cargo.err
 
-jsub -once -sync -cwd -mem 2048m cargo build --release
+jsub -once -cwd -mem 2048m cargo build --release
 
 sleep 5
 
