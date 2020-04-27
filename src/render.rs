@@ -312,8 +312,8 @@ impl Render for RenderWiki {
         rows.push("== ".to_string() + &platform.combination().to_string() + " ==");
 
         let petscan_query_url =
-            "https://petscan.wmflabs.org/?".to_string() + &platform.form_parameters().to_string();
-        let petscan_query_url_no_doit = "https://petscan.wmflabs.org/?".to_string()
+            "https://petscan-md.toolforge.org/?".to_string() + &platform.form_parameters().to_string();
+        let petscan_query_url_no_doit = "https://petscan-md.toolforge.org/?".to_string()
             + &platform.form_parameters().to_string_no_doit();
 
         let utc: DateTime<Utc> = Utc::now();
@@ -1088,7 +1088,7 @@ impl RenderJSON {
     }
 
     fn get_query_string(&self, platform: &Platform) -> String {
-        "https://petscan.wmflabs.org/?".to_string() + &platform.form_parameters().to_string()
+        "https://petscan-md.toolforge.org/?".to_string() + &platform.form_parameters().to_string()
     }
 
     fn cat_scan(
