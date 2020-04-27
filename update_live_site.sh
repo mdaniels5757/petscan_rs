@@ -6,17 +6,17 @@ git pull
 cargo update
 
 # Build new server binary
-cargo build --release
+jsub -once -sync -cwd -mem 2048m cargo build --release
 
 # Get restart code from config file
 code=`jq -r '.["restart-code"]' config.json`
 
 # Build restart URL
-url="http://127.0.0.1/?restart=$code"
+url="http://petscan-md.toolforge.org/?restart=$code"
 
 # Restart server
 curl -s -o /dev/null $url
 #sleep 1
-screen -r pts-0.petscan4
+#screen -r pts-0.petscan4
 #/usr/sbin/service ./target/release/petscan_rs restart
-
+#webservice restart
