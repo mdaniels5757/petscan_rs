@@ -6,7 +6,13 @@ git pull
 cargo update
 
 # Build new server binary
+rm ../cargo.out ../cargo.err
+
 jsub -once -sync -cwd -mem 2048m cargo build --release
+
+sleep 5
+
+tail -f ../cargo.out ../cargo.err
 
 # Get restart code from config file
 code=`jq -r '.["restart-code"]' config.json`
