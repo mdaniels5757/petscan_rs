@@ -16,7 +16,7 @@ url = "*"
 rayon = "*"
 htmlescape = "*"
 rand = "*"
-mysql = { version="^17" }#, features = ["ssl"] }
+mysql = { version="^18" }#, features = ["ssl"] }
 reqwest = { version = "^0.10", features = ["blocking", "json"] }
 time = "^0.2.9"
 percent-encoding = "*"
