@@ -663,10 +663,11 @@ impl Platform {
         let add_defaultsort = self.has_param("add_defaultsort");
         let add_disambiguation = self.has_param("add_disambiguation");
         let add_incoming_links = self.get_param_blank("sortby") == "incoming_links";
+        let add_transclusions = self.has_param("add_transclusions");
         if !add_coordinates
             && !add_image
             && !add_defaultsort
-            && !add_disambiguation & !add_incoming_links
+            && !add_disambiguation & !add_incoming_links & !add_transclusions
         {
             return Ok(());
         }
@@ -681,6 +682,7 @@ impl Platform {
                     if add_defaultsort {sql += ",(SELECT pp_value FROM page_props WHERE pp_page=page_id AND pp_propname='defaultsort' LIMIT 1) AS defaultsort" ;}
                     if add_disambiguation {sql += ",(SELECT pp_value FROM page_props WHERE pp_page=page_id AND pp_propname='disambiguation' LIMIT 1) AS disambiguation" ;}
                     if add_incoming_links {sql += ",(SELECT count(*) FROM pagelinks WHERE pl_namespace=page_namespace AND pl_title=page_title AND pl_from_namespace=0) AS incoming_links" ;}
+                    if add_transclusions {sql += ", (SELECT count(*) FROM templatelinks WHERE tl_namespace=page_namespace AND tl_title=page_title) AS transclusions"}
                     sql += " FROM page WHERE " ;
                     sql_batch.0 = sql + &sql_batch.0 ;
                     sql_batch.to_owned()
@@ -726,6 +728,12 @@ impl Platform {
                 }
                 if add_incoming_links {
                     entry.incoming_links = match parts.remove(0) {
+                        my::Value::Int(i) => Some(i as LinkCount),
+                        _ => None,
+                    };
+                }
+                if add_transclusions {
+                    entry.transclusions = match parts.remove(0) {
                         my::Value::Int(i) => Some(i as LinkCount),
                         _ => None,
                     };

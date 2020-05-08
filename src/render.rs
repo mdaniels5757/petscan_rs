@@ -30,6 +30,7 @@ pub struct RenderParams {
     add_image: bool,
     add_defaultsort: bool,
     add_disambiguation: bool,
+    add_transclusions: bool,
     add_incoming_links: bool,
     do_output_redlinks: bool,
     use_autolist: bool,
@@ -58,6 +59,7 @@ impl RenderParams {
             add_image: platform.has_param("add_image"),
             add_defaultsort: platform.has_param("add_defaultsort"),
             add_disambiguation: platform.has_param("add_disambiguation"),
+            add_transclusions: platform.has_param("add_transclusions"),
             add_incoming_links: platform.get_param_blank("sortby") == "incoming_links".to_string(),
             show_wikidata_item: false,
             is_wikidata: wiki == "wikidatawiki",
@@ -134,6 +136,9 @@ pub trait Render {
         }
         if params.add_disambiguation {
             columns.push("disambiguation");
+        }
+        if params.add_transclusions {
+            columns.push("transclusions");
         }
         if params.add_incoming_links {
             columns.push("incoming_links");
@@ -237,6 +242,7 @@ pub trait Render {
                 "defaultsort" => self.opt_string(&entry.get_defaultsort()),
                 "disambiguation" => self.opt_bool(&entry.disambiguation.as_option_bool()),
                 "incoming_links" => self.opt_linkcount(&entry.incoming_links),
+                "transclusions" => self.opt_linkcount(&entry.transclusions),
 
                 "img_size" => match &entry.get_file_info() {
                     Some(fi) => self.opt_usize(&fi.img_size),
@@ -960,6 +966,7 @@ impl RenderHTML {
                 "defaultsort" => "<th tt='h_defaultsort'></th>".to_string(),
                 "disambiguation" => "<th tt='h_disambiguation'></th>".to_string(),
                 "incoming_links" => "<th tt='h_incoming_links'></th>".to_string(),
+                "transclusions" => "<th tt='h_transclusions'></th>".to_string(),
                 "fileusage" => "<th tt='file_usage_data'></th>".to_string(),
                 other => {
                     // File data etc.
@@ -1293,6 +1300,7 @@ impl RenderJSON {
                 "defaultsort" => entry.get_defaultsort().map(|s| json!(s)),
                 "disambiguation" => Some(entry.disambiguation.as_json()),
                 "incoming_links" => entry.incoming_links.as_ref().map(|s| json!(s)),
+                "transclusions" => entry.transclusions.as_ref().map(|s| json!(s)),
                 "coordinates" => match &entry.get_coordinates() {
                     Some(coord) => Some(json!(format!("{}/{}", coord.lat, coord.lon))),
                     None => None,

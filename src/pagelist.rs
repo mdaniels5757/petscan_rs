@@ -23,6 +23,7 @@ pub enum PageListSort {
     Date(bool),
     RedlinksCount(bool),
     IncomingLinks(bool),
+    Transclusions(bool),
     FileSize(bool),
     UploadDate(bool),
     Random(bool),
@@ -37,6 +38,7 @@ impl PageListSort {
             "date" => Self::Date(descending),
             "redlinks" => Self::RedlinksCount(descending),
             "incoming_links" => Self::IncomingLinks(descending),
+            "transclusions" => Self::Transclusions(descending),
             "filesize" => Self::FileSize(descending),
             "uploaddate" => Self::UploadDate(descending),
             "random" => Self::Random(descending),
@@ -179,6 +181,7 @@ pub struct PageListEntry {
     pub page_id: Option<u32>,
     pub page_bytes: Option<u32>,
     pub incoming_links: Option<LinkCount>,
+    pub transclusions: Option<LinkCount>,
     pub link_count: Option<LinkCount>,
     pub redlink_count: Option<LinkCount>,
     page_timestamp: Option<Box<String>>,
@@ -217,6 +220,7 @@ impl PageListEntry {
             defaultsort: None,
             disambiguation: TriState::Unknown,
             incoming_links: None,
+            transclusions: None,
             page_image: None,
             coordinates: None,
             link_count: None,
@@ -356,6 +360,7 @@ impl PageListEntry {
             PageListSort::NsTitle(d) => self.compare_by_ns_title(other, *d),
             PageListSort::Size(d) => self.compare_by_size(other, *d),
             PageListSort::IncomingLinks(d) => self.compare_by_incoming(other, *d),
+            PageListSort::Transclusions(d) => self.compare_by_transclusions(other, *d),
             PageListSort::Date(d) => self.compare_by_date(other, *d),
             PageListSort::UploadDate(d) => self.compare_by_upload_date(other, *d),
             PageListSort::FileSize(d) => self.compare_by_file_size(other, *d),
@@ -404,6 +409,14 @@ impl PageListEntry {
         self.compare_by_opt(&self.incoming_links, &other.incoming_links, descending)
     }
 
+    fn compare_by_transclusions(
+        self: &PageListEntry,
+        other: &PageListEntry,
+        descending: bool,
+    ) -> Ordering {
+        self.compare_by_opt(&self.transclusions, &other.transclusions, descending)
+    }
+    
     fn compare_by_date(self: &PageListEntry, other: &PageListEntry, descending: bool) -> Ordering {
         self.compare_by_opt(
             &self.get_page_timestamp(),
