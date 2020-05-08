@@ -1,20 +1,22 @@
 use crate::pagelist::*;
 use crate::platform::Platform;
-use mysql as my;
+use mysql_async::from_row;
+use mysql_async::prelude::Queryable;
+use mysql_async::Value as MyValue;
 use rayon::prelude::*;
 use serde_json::value::Value;
 use std::collections::HashMap;
-use std::io::prelude::*;
-use std::io::BufReader;
 use std::time;
 use wikibase::mediawiki::api::Api;
 use wikibase::mediawiki::title::Title;
+use async_trait::async_trait;
 
-pub type SQLtuple = (String, Vec<String>);
+pub type SQLtuple = (String, Vec<MyValue>);
 
+#[async_trait]
 pub trait DataSource {
     fn can_run(&self, platform: &Platform) -> bool;
-    fn run(&mut self, platform: &Platform) -> Result<PageList, String>;
+    async fn run(&mut self, platform: &Platform) -> Result<PageList, String>;
     fn name(&self) -> String;
 }
 
@@ -23,6 +25,7 @@ pub trait DataSource {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceLabels {}
 
+#[async_trait]
 impl DataSource for SourceLabels {
     fn name(&self) -> String {
         "labels".to_string()
@@ -32,28 +35,23 @@ impl DataSource for SourceLabels {
         platform.has_param("labels_yes") || platform.has_param("labels_any")
     }
 
-    fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
-        let state = platform.state();
-        let db_user_pass = state
-            .get_db_mutex()
-            .lock()
-            .map_err(|e| format!("{:?}", e))?;
+    async fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
         let sql = platform.get_label_sql();
-        let mut conn = platform
+        let rows = platform
             .state()
-            .get_wiki_db_connection(&db_user_pass, &"wikidatawiki".to_string())?;
-        let result = match conn.prep_exec(sql.0, sql.1) {
-            Ok(r) => r,
-            Err(e) => return Err(format!("{:?}", e)),
-        };
-
-        let ret = PageList::new_from_wiki("wikidatawiki");
-        result
-            .filter_map(|row_result| row_result.ok())
-            .filter_map(|row| my::from_row_opt::<Vec<u8>>(row).ok())
-            .map(|row| String::from_utf8_lossy(&row).into_owned())
-            .filter_map(|row| Platform::entry_from_entity(&row))
-            .for_each(|entry| ret.add_entry(entry).unwrap_or(()));
+            .get_wiki_db_connection( &"wikidatawiki".to_string())
+            .await?
+            .exec_iter(sql.0.as_str(),mysql_async::Params::Positional(sql.1)).await
+            .map_err(|e|format!("{:?}",e))?
+            .map_and_drop(|row| from_row::<(Vec<u8>,)>(row))
+            .await
+            .map_err(|e|format!("{:?}",e))?;
+        let ret = PageList::new_from_wiki_with_capacity("wikidatawiki",rows.len());
+        rows
+            .iter()
+            .map(|row|String::from_utf8_lossy(&row.0))
+            .filter_map(|item|Platform::entry_from_entity(&item))
+            .for_each(|entry| ret.add_entry(entry).unwrap_or(()) );
         Ok(ret)
     }
 }
@@ -69,6 +67,7 @@ impl SourceLabels {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceWikidata {}
 
+#[async_trait]
 impl DataSource for SourceWikidata {
     fn name(&self) -> String {
         "wikidata".to_string()
@@ -78,7 +77,7 @@ impl DataSource for SourceWikidata {
         platform.has_param("wpiu_no_statements") && platform.has_param("wikidata_source_sites")
     }
 
-    fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
+    async fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
         let no_statements = platform.has_param("wpiu_no_statements");
         let sites = platform
             .get_param("wikidata_source_sites")
@@ -102,32 +101,24 @@ impl DataSource for SourceWikidata {
         }
 
         // Perform DB query
-        let state = platform.state();
-        let db_user_pass = state
-            .get_db_mutex()
-            .lock()
-            .map_err(|e| format!("{:?}", e))?;
-        let mut conn = platform
+        let rows = platform
             .state()
-            .get_wiki_db_connection(&db_user_pass, &"wikidatawiki".to_string())?;
-        let result = conn
-            .prep_exec(sql, sites.1)
-            .map_err(|e| format!("{:?}", e))?;
+            .get_wiki_db_connection(&"wikidatawiki".to_string())
+            .await?
+            .exec_iter(sql.as_str(),()).await
+            .map_err(|e|format!("{:?}",e))?
+            .map_and_drop(|row| from_row::<usize>(row))
+            .await
+            .map_err(|e|format!("{:?}",e))?;
 
         let ret = PageList::new_from_wiki(&"wikidatawiki".to_string());
-        result
-            .filter_map(|row| row.ok())
-            .filter_map(|row_inner| match my::from_row_opt::<usize>(row_inner) {
-                Ok(ips_item_id) => {
-                    let term_full_entity_id = format!("Q{}", ips_item_id);
-                    Platform::entry_from_entity(&term_full_entity_id)
-                }
-                Err(_e) => {
-                    // TODO error log for failed usize conversion?
-                    None
-                }
-            })
-            .for_each(|entry| ret.add_entry(entry).unwrap_or(()));
+        for ips_item_id in rows {
+            let term_full_entity_id = format!("Q{}", ips_item_id);
+            match Platform::entry_from_entity(&term_full_entity_id) {
+                Some(entry) => {ret.add_entry(entry).unwrap_or(());}
+                None => {}
+            }
+        }
         Ok(ret)
     }
 }
@@ -143,6 +134,7 @@ impl SourceWikidata {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourcePagePile {}
 
+#[async_trait]
 impl DataSource for SourcePagePile {
     fn name(&self) -> String {
         "pagepile".to_string()
@@ -152,13 +144,13 @@ impl DataSource for SourcePagePile {
         platform.has_param("pagepile")
     }
 
-    fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
+    async fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
         let pagepile = platform
             .get_param("pagepile")
             .ok_or(format!("Missing parameter 'pagepile'"))?;
-        let timeout = Some(time::Duration::from_secs(240));
-        let builder = reqwest::blocking::ClientBuilder::new().timeout(timeout);
-        let api = Api::new_from_builder("https://www.wikidata.org/w/api.php", builder)
+        let timeout = time::Duration::from_secs(240);
+        let builder = reqwest::ClientBuilder::new().timeout(timeout);
+        let api = Api::new_from_builder("https://www.wikidata.org/w/api.php", builder).await
             .map_err(|e| e.to_string())?;
         let params = api.params_into(&[
             ("id", &pagepile.to_string()),
@@ -167,14 +159,14 @@ impl DataSource for SourcePagePile {
             ("doit", "1"),
         ]);
         let text = api
-            .query_raw("https://tools.wmflabs.org/pagepile/api.php", &params, "GET")
+            .query_raw("https://tools.wmflabs.org/pagepile/api.php", &params, "GET").await
             .map_err(|e| format!("PagePile: {:?}", e))?;
         let v: Value =
             serde_json::from_str(&text).map_err(|e| format!("PagePile JSON: {:?}", e))?;
         let wiki = v["wiki"]
             .as_str()
             .ok_or(format!("PagePile {} does not specify a wiki", &pagepile))?;
-        let api = platform.state().get_api_for_wiki(wiki.to_string())?; // Just because we need query_raw
+        let api = platform.state().get_api_for_wiki(wiki.to_string()).await?; // Just because we need query_raw
         let ret = PageList::new_from_wiki(wiki);
         v["pages"]
             .as_array()
@@ -204,6 +196,7 @@ impl SourcePagePile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceSearch {}
 
+#[async_trait]
 impl DataSource for SourceSearch {
     fn name(&self) -> String {
         "search".to_string()
@@ -215,7 +208,7 @@ impl DataSource for SourceSearch {
             && platform.has_param("search_max_results")
     }
 
-    fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
+    async fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
         let wiki = platform
             .get_param("search_wiki")
             .ok_or(format!("Missing parameter 'search_wiki'"))?;
@@ -230,7 +223,7 @@ impl DataSource for SourceSearch {
             Ok(max) => max,
             Err(e) => return Err(format!("{:?}", e)),
         };
-        let api = platform.state().get_api_for_wiki(wiki.to_string())?;
+        let api = platform.state().get_api_for_wiki(wiki.to_string()).await?;
         let srlimit = if max > 500 { 500 } else { max };
         let srlimit = format!("{}", srlimit);
         let namespace_ids = platform
@@ -255,7 +248,7 @@ impl DataSource for SourceSearch {
             ("srsearch", query.as_str()),
             ("srnamespace", namespace_ids.as_str()),
         ]);
-        let result = match api.get_query_api_json_limit(&params, Some(max)) {
+        let result = match api.get_query_api_json_limit(&params, Some(max)).await {
             Ok(result) => result,
             Err(e) => return Err(format!("{:?}", e)),
         };
@@ -283,6 +276,7 @@ impl SourceSearch {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceManual {}
 
+#[async_trait]
 impl DataSource for SourceManual {
     fn name(&self) -> String {
         "manual".to_string()
@@ -292,11 +286,11 @@ impl DataSource for SourceManual {
         platform.has_param("manual_list") && platform.has_param("manual_list_wiki")
     }
 
-    fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
+    async fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
         let wiki = platform
             .get_param("manual_list_wiki")
             .ok_or(format!("Missing parameter 'manual_list_wiki'"))?;
-        let api = platform.state().get_api_for_wiki(wiki.to_string())?;
+        let api = platform.state().get_api_for_wiki(wiki.to_string()).await?;
         let ret = PageList::new_from_wiki(&wiki);
         platform
             .get_param("manual_list")
@@ -328,6 +322,7 @@ impl SourceManual {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceSparql {}
 
+#[async_trait]
 impl DataSource for SourceSparql {
     fn name(&self) -> String {
         "sparql".to_string()
@@ -337,14 +332,14 @@ impl DataSource for SourceSparql {
         platform.has_param("sparql")
     }
 
-    fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
+    async fn run(&mut self, platform: &Platform) -> Result<PageList, String> {
         let sparql = platform
             .get_param("sparql")
             .ok_or(format!("Missing parameter 'sparql'"))?;
 
-        let timeout = Some(time::Duration::from_secs(120));
-        let builder = reqwest::blocking::ClientBuilder::new().timeout(timeout);
-        let api = Api::new_from_builder("https://www.wikidata.org/w/api.php", builder)
+        let timeout = time::Duration::from_secs(120);
+        let builder = reqwest::ClientBuilder::new().timeout(timeout);
+        let api = Api::new_from_builder("https://www.wikidata.org/w/api.php", builder).await
             .map_err(|e| format!("SourceSparql::run:1 {:?}", e))?;
 
         let sparql_url = api.get_site_info_string("general", "wikibase-sparql")?;
@@ -355,26 +350,23 @@ impl DataSource for SourceSparql {
         let response = match api
             .client()
             .post(sparql_url)
-            .header(reqwest::header::USER_AGENT, "rust testing")
+            .header(reqwest::header::USER_AGENT, "PetScan")
             .form(&params)
-            .send()
+            .send().await
         {
             Ok(resp) => resp,
-            Err(e) => return Err(format!("SPAQL: {:?}", e)),
+            Err(e) => return Err(format!("SPARL: {:?}", e)),
         };
 
         let ret = PageList::new_from_wiki("wikidatawiki");
-        let reader = BufReader::new(response);
+        let response = response.text().await.unwrap();
+        //let reader = BufReader::new(response); // TODO read line by line from stream, somehow
         let mut mode: u8 = 0;
         let mut header = String::new();
         let mut binding = String::new();
         let mut first_var = String::new();
-        for line in reader.lines() {
-            let line = match line {
-                Ok(line) => line,
-                _ => continue,
-            };
-            match line.as_str() {
+        for line in response.split("\n") { // reader.lines() {
+            match line {
                 "{" => continue,
                 "}" => continue,
                 "  \"results\" : {" => {}
